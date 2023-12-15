@@ -4,6 +4,8 @@ const cors = require("cors");
 const app = express();
 const validUrl = require("valid-url");
 const shortid = require("shortid");
+const dns = require("dns");
+
 const urlDatabase = {};
 
 // Basic Configuration
@@ -20,10 +22,19 @@ app.get("/", function (req, res) {
 
 function validateUrl(req, res, next) {
   const { url } = req.body;
+
   if (!validUrl.isWebUri(url)) {
     return res.status(400).json({ error: "Invalid URL" });
   }
-  next();
+
+  // Use dns.lookup to verify the submitted URL
+  const urlHost = new URL(url).host;
+  dns.lookup(urlHost, (err) => {
+    if (err) {
+      return res.status(400).json({ error: "Invalid host in the URL" });
+    }
+    next();
+  });
 }
 
 app.post("/api/shorturl", validateUrl, (req, res) => {
@@ -54,3 +65,4 @@ app.get("/api/shorturl/:shortCode", (req, res) => {
 app.listen(port, function () {
   console.log(`Listening on port ${port}`);
 });
+
