@@ -1,68 +1,108 @@
-require("dotenv").config();
-const express = require("express");
-const cors = require("cors");
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const dns = require('dns');
+const fs = require('fs');
 const app = express();
-const validUrl = require("valid-url");
-const shortid = require("shortid");
-const dns = require("dns");
 
-const urlDatabase = {};
-
-// Basic Configuration
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use("/public", express.static(`${process.cwd()}/public`));
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
+app.use('/public', express.static(`${process.cwd()}/public`));
 
-app.get("/", function (req, res) {
-  res.sendFile(process.cwd() + "/views/index.html");
+app.get('/', (req, res) => {
+  res.sendFile(process.cwd() + '/views/index.html');
 });
 
-function validateUrl(req, res, next) {
-  const { url } = req.body;
+function dataManagement(action, input) {
+  const filePath = './public/data.json';
 
-  if (!validUrl.isWebUri(url)) {
-    return res.status(400).json({ error: "Invalid URL" });
+  if (!fs.existsSync(filePath)) {
+    fs.closeSync(fs.openSync(filePath, 'w'));
   }
 
-  // Use dns.lookup to verify the submitted URL
-  const urlHost = new URL(url).host;
-  dns.lookup(urlHost, (err) => {
-    if (err) {
-      return res.status(400).json({ error: "Invalid host in the URL" });
+  const file = fs.readFileSync(filePath);
+
+  if (action === 'save data' && input != null) {
+    const data = file.length === 0 ? [] : JSON.parse(file.toString());
+
+    const inputExist = data.map(d => d.original_url);
+    const checkInput = inputExist.includes(input.original_url);
+
+    if (!checkInput) {
+      data.push(input);
+      fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
     }
-    next();
-  });
+  } else if (action === 'load data' && input == null) {
+    return file.length === 0 ? [] : JSON.parse(file);
+  }
 }
 
-app.post("/api/shorturl", validateUrl, (req, res) => {
-  const { url } = req.body;
+function genShortUrl() {
+  const allData = dataManagement('load data');
+  const min = 1;
+  const max = allData ? allData.length * 1000 : 1000;
+  const short = Math.ceil(Math.random() * (max - min + 1) + min);
 
-  // Generate a short code using shortid
-  const shortCode = shortid.generate();
+  if (!allData || !allData.map) {
+    return short;
+  }
 
-  // Store the URL mapping in the database
-  urlDatabase[shortCode] = url;
+  const shortExist = allData.map(d => d.short_url);
+  const checkShort = shortExist.includes(short);
 
-  // Respond with the short code
-  res.json({ original_url: url, short_url: shortCode });
+  return checkShort ? genShortUrl() : short;
+}
+
+app.post('/api/shorturl', (req, res) => {
+  const input = req.body.url;
+
+  if (!input) {
+    return res.json({ error: 'invalid url' });
+  }
+
+  const domain = input.match(/^(?:https?:\/\/)?(?:[^@\/\n]+@)?(?:www\.)?([^:\/?\n]+)/igm);
+  const param = domain[0].replace(/^https?:\/\//i, "");
+
+  dns.lookup(param, (err) => {
+    if (err) {
+      return res.json({ error: 'invalid url' });
+    }
+
+    const short = genShortUrl();
+    const dict = { original_url: input, short_url: short };
+    dataManagement('save data', dict);
+    return res.json(dict);
+  });
 });
 
-app.get("/api/shorturl/:shortCode", (req, res) => {
-  const { shortCode } = req.params;
+app.get('/api/shorturl/:shorturl', (req, res) => {
+  const input = Number(req.params.shorturl);
+  const allData = dataManagement('load data');
 
-  // Check if the short code exists in the database
-  if (urlDatabase.hasOwnProperty(shortCode)) {
-    // Redirect to the original URL
-    res.redirect(urlDatabase[shortCode]);
+  if (!allData || !allData.map) {
+    return res.json({ data: 'No matching data', short: input, existing: [] });
+  }
+
+  const shortExist = allData.map(d => d.short_url);
+  const checkShort = shortExist.includes(input);
+
+  if (checkShort) {
+    const dataFound = allData[shortExist.indexOf(input)];
+    return res.redirect(dataFound.original_url);
   } else {
-    res.status(404).json({ error: "Short URL not found" });
+    return res.json({ data: 'No matching data', short: input, existing: shortExist });
   }
 });
 
-app.listen(port, function () {
+app.get('/api/hello', (req, res) => {
+  res.json({ greeting: 'hello API' });
+});
+
+app.listen(port, () => {
   console.log(`Listening on port ${port}`);
 });
 
